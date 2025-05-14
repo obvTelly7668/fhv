@@ -1,129 +1,92 @@
 import os
 import shutil
-import sqlite3
+import zipfile
 from datetime import datetime
 from nicegui import ui
-from tkinter import Tk, filedialog
+from pathlib import Path
 
-# ---------- Datenbank Setup ----------
-def init_db():
-    conn = sqlite3.connect("filelog.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS file_moves (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filename TEXT,
-            source_path TEXT,
-            destination_path TEXT,
-            date_used TEXT,
-            date_type TEXT,
-            moved_at TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+UPLOAD_DIR = Path("uploads")
+SORTED_DIR = Path("sorted")
+ZIP_PATH = Path("output.zip")
 
-def log_to_db(filename, src, dst, date_used, date_type_val):
-    conn = sqlite3.connect("filelog.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO file_moves (filename, source_path, destination_path, date_used, date_type, moved_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        filename,
-        src,
-        dst,
-        date_used,
-        date_type_val,
-        datetime.now().isoformat()
-    ))
-    conn.commit()
-    conn.close()
+# Sicherstellen, dass Ordner vorhanden sind
+UPLOAD_DIR.mkdir(exist_ok=True)
+SORTED_DIR.mkdir(exist_ok=True)
 
-# ---------- Globale Variablen ----------
-source_path = ""
-target_path = ""
-date_type = "modified"
+# Benutzerstatus pro Session
+@ui.page('/')
+def main_page():
+    user_data = {
+        'date_type': 'modified',
+        'files': []
+    }
 
-status_label = ui.label().classes("text-blue-600")
+    status_label = ui.label()
 
-# ---------- Funktionen ----------
-def choose_folder(callback):
-    root = Tk()
-    root.withdraw()
-    folder = filedialog.askdirectory()
-    root.destroy()
-    if folder:
-        callback(folder)
+    ui.label("📁 Datei-Organizer Web").classes("text-2xl font-bold my-4")
 
-def set_source_path(path):
-    global source_path
-    source_path = path
-    source_label.set_text(f"Quellordner: {path}")
+    ui.label("📤 Dateien hochladen").classes("mt-4")
+    uploader = ui.upload(multiple=True, auto_upload=True, on_upload=lambda e: handle_upload(e, user_data))
+    ui.label("Dateien werden temporär auf dem Server gespeichert.")
 
-def set_target_path(path):
-    global target_path
-    target_path = path
-    target_label.set_text(f"Zielordner: {path}")
+    ui.label("📅 Sortieren nach:")
+    ui.radio(
+        ["modified", "created"],
+        value="modified",
+        on_change=lambda e: user_data.update({'date_type': e.value})
+    ).props("inline")
 
-def sort_files():
-    global source_path, target_path, date_type
+    ui.button("🚀 Sortieren und ZIP erstellen", on_click=lambda: sort_and_zip(user_data, status_label)).classes("mt-4")
 
-    if not source_path or not target_path:
-        status_label.set_text("❗ Bitte Quell- und Zielordner wählen.")
-        return
+    ui.separator()
 
-    use_ctime = (date_type == "created")
+    status_label = ui.label()
+
+    with ui.row().classes("mt-4"):
+        ui.button("📥 ZIP herunterladen", on_click=download_zip)
+
+# Dateiupload verarbeiten
+def handle_upload(e, user_data):
+    file_path = UPLOAD_DIR / e.name
+    with open(file_path, "wb") as f:
+        f.write(e.content.read())
+    user_data['files'].append(file_path)
+
+# Dateien sortieren und ZIP erstellen
+def sort_and_zip(user_data, status_label):
+    # Leeren des Zielordners
+    if SORTED_DIR.exists():
+        shutil.rmtree(SORTED_DIR)
+    SORTED_DIR.mkdir(exist_ok=True)
 
     try:
-        for filename in os.listdir(source_path):
-            file_path = os.path.join(source_path, filename)
-            if os.path.isfile(file_path):
-                timestamp = os.path.getctime(file_path) if use_ctime else os.path.getmtime(file_path)
-                year = datetime.fromtimestamp(timestamp).year
-                target_folder = os.path.join(target_path, str(year))
-                os.makedirs(target_folder, exist_ok=True)
-                new_path = os.path.join(target_folder, filename)
-                shutil.move(file_path, new_path)
+        for file_path in user_data['files']:
+            if not file_path.exists():
+                continue
+            timestamp = os.path.getctime(file_path) if user_data['date_type'] == 'created' else os.path.getmtime(file_path)
+            year = datetime.fromtimestamp(timestamp).year
+            target_folder = SORTED_DIR / str(year)
+            target_folder.mkdir(parents=True, exist_ok=True)
+            shutil.copy(file_path, target_folder / file_path.name)
 
-                log_to_db(
-                    filename=filename,
-                    src=file_path,
-                    dst=new_path,
-                    date_used=datetime.fromtimestamp(timestamp).isoformat(),
-                    date_type_val=date_type
-                )
-        status_label.set_text("✅ Dateien wurden erfolgreich sortiert und gespeichert.")
+        # ZIP-Datei erstellen
+        with zipfile.ZipFile(ZIP_PATH, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for foldername, _, filenames in os.walk(SORTED_DIR):
+                for filename in filenames:
+                    file_path = os.path.join(foldername, filename)
+                    arcname = os.path.relpath(file_path, SORTED_DIR)
+                    zipf.write(file_path, arcname)
+
+        status_label.text = "✅ Sortierung abgeschlossen. ZIP bereit zum Download."
     except Exception as e:
-        status_label.set_text(f"❌ Fehler: {e}")
+        status_label.text = f"❌ Fehler beim Sortieren: {e}"
 
-# ---------- GUI ----------
-init_db()
+# Download-Funktion
+def download_zip():
+    if ZIP_PATH.exists():
+        ui.download(ZIP_PATH)
+    else:
+        ui.notify("❌ Keine ZIP-Datei gefunden. Bitte zuerst sortieren.", color='negative')
 
-ui.label("📁 Datei-Organizer nach Jahr").classes("text-xl mt-4")
-
-ui.button("Quellordner wählen", on_click=lambda: choose_folder(set_source_path))
-source_label = ui.label("Noch kein Quellordner gewählt")
-
-ui.button("Zielordner wählen", on_click=lambda: choose_folder(set_target_path))
-target_label = ui.label("Noch kein Zielordner gewählt")
-
-ui.label("Sortieren nach:").classes("mt-4")
-
-ui.radio(
-    ["modified", "created"],
-    value="modified",
-    on_change=lambda e: set_date_type(e.value)
-).props("inline")
-
-def set_date_type(value):
-    global date_type
-    date_type = value
-
-ui.button("🚀 Sortieren starten", on_click=sort_files).classes("mt-4")
-
-ui.separator()
-status_label = ui.label()
-
-ui.run(host='0.0.0.0')
-
+# App starten
+ui.run(host='0.0.0.0', port=8080)

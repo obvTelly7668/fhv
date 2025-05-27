@@ -25,25 +25,25 @@ def main_page():
 
     ui.label("📁 Datei-Organizer Web").classes("text-2xl font-bold my-4")
 
-    ui.label("📤 Dateien hochladen").classes("mt-4")
+    ui.label(" Dateien hochladen").classes("mt-4")
     uploader = ui.upload(multiple=True, auto_upload=True, on_upload=lambda e: handle_upload(e, user_data))
     ui.label("Dateien werden temporär auf dem Server gespeichert.")
 
-    ui.label("📅 Sortieren nach:")
+    ui.label(" Sortieren nach:")
     ui.radio(
         ["modified", "created"],
         value="modified",
         on_change=lambda e: user_data.update({'date_type': e.value})
     ).props("inline")
 
-    ui.button("🚀 Sortieren und ZIP erstellen", on_click=lambda: sort_and_zip(user_data, status_label)).classes("mt-4")
+    ui.button(" Sortieren und ZIP erstellen", on_click=lambda: sort_and_zip(user_data, status_label)).classes("mt-4")
 
     ui.separator()
 
     status_label = ui.label()
 
     with ui.row().classes("mt-4"):
-        ui.button("📥 ZIP herunterladen", on_click=download_zip)
+        ui.button(" ZIP herunterladen", on_click=download_zip)
 
 # Dateiupload verarbeiten
 def handle_upload(e, user_data):
@@ -77,16 +77,16 @@ def sort_and_zip(user_data, status_label):
                     arcname = os.path.relpath(file_path, SORTED_DIR)
                     zipf.write(file_path, arcname)
 
-        status_label.text = "✅ Sortierung abgeschlossen. ZIP bereit zum Download."
+        status_label.text = " Sortierung abgeschlossen. ZIP bereit zum Download."
     except Exception as e:
-        status_label.text = f"❌ Fehler beim Sortieren: {e}"
+        status_label.text = f" Fehler beim Sortieren: {e}"
 
 # Download-Funktion
 def download_zip():
     if ZIP_PATH.exists():
         ui.download(ZIP_PATH)
     else:
-        ui.notify("❌ Keine ZIP-Datei gefunden. Bitte zuerst sortieren.", color='negative')
+        ui.notify(" Keine ZIP-Datei gefunden. Bitte zuerst sortieren.", color='negative')
 
 # App starten
 ui.run(host='0.0.0.0', port=8080)
